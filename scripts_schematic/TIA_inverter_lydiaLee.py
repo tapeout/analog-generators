@@ -65,10 +65,10 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
     ibp_fun = db_p.get_function('ibias', env=sim_env)    
 
     # Get sweep values (Vg, Vd)
-    vg_idx = db_n.get_fun_arg_index('vgs')
-    vg_min, vg_max = ibn_fun.get_input_range(vg_idx)
+    vg_min = 0
+    vg_max = vdd
     vg_vec = np.arange(vg_min, vg_max, vg_res)
-    nf_n_vec = np.arange(5, 20, 1)  # DEBUGGING: Is there a non-brute force way of setting this?
+    nf_n_vec = np.arange(1, 20, 1)  # DEBUGGING: Is there a non-brute force way of setting this?
 
     # Find the best operating point
     best_ibias = float('inf')
@@ -89,7 +89,7 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
         # Sweep the number of fingers to minimize power
         for nf_n in nf_n_vec:
             nf_p = int(round(nf_n * pn_ratio))
-            if nf_p == 0:
+            if nf_p <= 0:
                 continue
             print("N/P: {}/{} fingers".format(nf_n, nf_p))
             # Extracting FET ss parameters and scaling by width
@@ -120,10 +120,10 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
                 miller = (1-gm*rf)/(ro+rf)*ro
                 cin = cpd + (1-miller)*(cgd_n + cgd_p) + cgs_n + cgs_p # cpd + cgg_p + cgg_n
                 if abs(rdc) < rdc_min-1e-8:
-                    print("Rdc: {} (FAIL)\n".format(rdc))
+                    print("RDC: {0:.2f} (FAIL)\n".format(rdc))
                     continue
                 else:
-                    print("Rdc: {}".format(rdc))
+                    print("RDC: {0:.2f}".format(rdc))
                 wn = np.sqrt((1+A0)/(ro*rf*cin*cout))
                 zeta = 1/(2*np.sqrt(1+A0)) * \
                     (np.sqrt(ro/rf * cin/cout) \
@@ -138,10 +138,10 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
                     print("BW: {}".format(fbw))
                 pm = np.degrees(np.arctan(2*zeta / np.sqrt(np.sqrt(4*zeta**4+1) - 2*zeta**2)))
                 if pm < pm_min or isnan(pm):
-                    print("PM: {} (FAIL)\n".format(pm))
+                    print("PM: {0:.2f} (FAIL)\n".format(pm))
                     continue
                 else:
-                    print("PM: {}\n".format(pm))
+                    print("PM: {0:.2f}\n".format(pm))
                 if ibias_n*nf_n < best_ibias:
                     best_ibias = ibias_n*nf_n
                     best_op = dict(
@@ -194,10 +194,10 @@ def design_inverter_tia_lti(db_n, db_p, sim_env,
     ibp_fun = db_p.get_function('ibias', env=sim_env)    
 
     # Get sweep values (Vg, Vd)
-    vg_idx = db_n.get_fun_arg_index('vgs')
-    vg_min, vg_max = ibn_fun.get_input_range(vg_idx)
+    vg_min = 0
+    vg_max = vdd
     vg_vec = np.arange(vg_min, vg_max, vg_res)
-    nf_n_vec = np.arange(5, 15, 1)  # DEBUGGING: Is there a non-brute force way of setting this?
+    nf_n_vec = np.arange(1, 20, 1)  # DEBUGGING: Is there a non-brute force way of setting this?
 
     # Find the best operating point
     best_ibias = float('inf')
@@ -218,9 +218,12 @@ def design_inverter_tia_lti(db_n, db_p, sim_env,
         # Sweep the number of fingers to minimize power
         for nf_n in nf_n_vec:
             nf_p = int(round(nf_n * pn_ratio))
-            if nf_p == 0:
+            if nf_p <= 0:
                 continue
-            #print("N/P: {}/{} fingers".format(nf_n, nf_p))
+            ibias_error = abs(abs(ibias_p)*nf_p-abs(ibias_n)*nf_n)/(abs(ibias_n)*nf_n)
+            if ibias_error > 0.05:
+                continue
+            print("N/P: {}/{} fingers".format(nf_n, nf_p))
             # Finding amplifier ss parameters
             inv = LTICircuit()
             inv.add_transistor(n_op_info, 'out', 'in', 'gnd', fg=nf_n)
@@ -261,7 +264,7 @@ def design_inverter_tia_lti(db_n, db_p, sim_env,
 
             # Assume Rdc is negative, bound Rf
             rf_min = max(rdc_min*(1+A0)/A0 + ro/A0, 0)
-            rf_vec = np.arange(rf_min, 15e3, rf_res)
+            rf_vec = np.arange(rf_min, rdc_min*5, rf_res)
             # Sweep values of Rf to check f3dB and PM spec
             for rf in rf_vec:
                 # Circuit for GBW
@@ -275,14 +278,13 @@ def design_inverter_tia_lti(db_n, db_p, sim_env,
                 num, den = circuit.get_num_den(in_name='in', out_name='out', in_type='i')
                 rdc = num[-1]/den[-1]
                 if abs(rdc) < rdc_min-1e-8:
-                    #print("Rdc: {} (FAIL)\n".format(rdc))
+                    print("RDC: {0:.2f} (FAIL)\n".format(rdc))
                     continue
                 else:
-                    pass
-                    #print("Rdc: {}".format(rdc))
+                    print("RDC: {0:.2f}".format(rdc))
                 fbw = get_w_3db(num, den)/(2*np.pi)
                 if fbw < fbw_min or isnan(fbw):
-                    #print("BW: {} (FAIL)\n".format(fbw))
+                    print("BW: {} (FAIL)\n".format(fbw))
                     break   # Increasing Rf isn't going to help
                 else:
                     print("BW: {}".format(fbw))
@@ -334,18 +336,18 @@ def run_main():
         db_n=nch_db,
         db_p=pch_db,
         sim_env=sim_env,
-        vg_res=0.05,
+        vg_res=0.01,
         rf_res=100,
-        vdd=0.8,
-        cpd=0e-15,
-        cload=10e-15,
+        vdd=1.0,
+        cpd=5e-15,
+        cload=20e-15,
         rdc_min=1e3,
         fbw_min=5e9,
         pm_min=45
         )
 
-    # amp_specs = design_inverter_tia_eqn(**specs)
-    amp_specs = design_inverter_tia_lti(**specs)
+    amp_specs = design_inverter_tia_eqn(**specs)
+    # amp_specs = design_inverter_tia_lti(**specs)
     pprint.pprint(amp_specs)
     print('done')
 
