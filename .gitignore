@@ -1,0 +1,14 @@
+# python/IDE files
+*.pyc
+__pycache__
+.idea
+
+# misc edit/log files
+*~
+*.log
+*.log.*
+IPOPT.out
+
+# misc configuration/history files
+.ipython
+.jupyter
