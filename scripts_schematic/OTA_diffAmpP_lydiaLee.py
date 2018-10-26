@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-# Alex Moreno + Lydia Lee
-# Spring 2018
+# Lydia Lee
+# Fall 2018
 
 # ASSUMPTIONS:
 # (1) 100nm channel length, 500nm finger width.
 # (2) LVT devices
-# (3) All NMOS and PMOS devices have the back-gate tied to VSS
 # (4) 300K
 # (5) TT process corner
 
@@ -29,113 +28,10 @@ def get_db(spec_file, intent, interp_method='spline', sim_env='TT'):
     mos_db.set_dsn_params(intent=intent)
     return mos_db
 
-def design_diffPairP(db_n, db_p, sim_env,
-        vdd, cload, vincm,
-        gain_min, fbw_min, pm_min,
-        error_tol=0.05):
-    """
-    Inputs:
-    Returns:
-    """
-    # TODO: change hardcoded value
-    vstar_min = 0.15
-    
-    # find the best operating point
-    best_ibias = float('inf')
-    best_op = None
-    
-    # (loosely) constrain tail voltage
-    # TODO: replace with binary search
-    vtail_min = vincm + 2*vstar_min
-    vtail_max = vdd
-    vtail_vec = np.arange(vtail_min, vtail_max, 10e-3)
-
-    # sweep tail voltage
-    for vtail in vtail_vec:
-        # (loosely) constrain output DC voltage
-        # TODO: replace with binary search
-        vout_min = vstar_min
-        vout_max = vtail - vstar_min
-        vout_vec = np.arange(vout_min, vout_max, 10e-3)
-        # sweep output DC voltage
-        for vout in vout_vec:
-            in_op = db_p.query(vgs=vincm-vtail, vds=vout-vtail, vbs=-vtail)
-            load_op = db_n.query(vgs=vout, vds=vout, vbs=0)
-            # TODO: constrain number of input devices
-            nf_in_min = 4
-            nf_in_max = 30
-            nf_in_vec = np.arange(nf_in_min, nf_in_max, 2)
-            for nf_in in nf_in_vec:
-                print("VTAIL: {0:.2f}".format(vtail))
-                print("VOUT: {0:.2f}".format(vout))
-                print("NF_IN: {}".format(nf_in))
-                ibranch = abs(in_op['ibias']*nf_in)
-                if ibranch*2 > best_ibias:
-                    print("ITAIL: {} (FAIL)\n".format(ibranch*2))
-                    continue
-                print("ITAIL: {}".format(ibranch*2))    
-                # matching NMOS and PMOS bias current
-                nf_load = int(abs(round(ibranch/load_op['ibias'])))
-                if nf_load < 1:
-                    print("NF_LOAD: {} (FAIL)\n".format(nf_load))
-                    continue 
-                print("NF_LOAD: {}".format(nf_load))
-                iload = load_op['ibias']*nf_load
-                ibranch_error = (abs(iload)-abs(ibranch))/abs(ibranch)
-                if ibranch_error > error_tol:
-                    print("IBRANCH MISMATCH: {0:.2f} vs. {0:.2f} (FAIL)\n".format(abs(ibranch), abs(iload)))
-                    continue
-                # create LTICircuit
-                amp = LTICircuit()
-                amp.add_transistor(in_op, 'out', 'in', 'gnd', 'gnd', fg=nf_in)
-                amp.add_transistor(load_op, 'out', 'gnd', 'gnd', 'gnd', fg=nf_load)
-                amp.add_cap(cload, 'out', 'gnd')
-                num, den = amp.get_num_den(in_name='in', out_name='out', in_type='v')
-                
-                gm = in_op['gm']*nf_in
-                ro = 1/(in_op['gds']*nf_in+load_op['gds']*nf_load)
-                print("EXPECTED GAIN: {0:.2f}".format(gm*ro))
-                
-                gain = abs(num[-1]/den[-1])
-                if gain < gain_min:
-                    print("GAIN: {0:.2f} (FAIL)\n".format(gain))
-                    continue
-                print("GAIN: {0:.2f}".format(gain))
-                wbw = get_w_3db(num, den)
-                if wbw == None:
-                    print("BW: None (FAIL)\n")
-                    continue
-                fbw = wbw/(2*np.pi)
-                if fbw < fbw_min:
-                    print("BW: {0:.2f} (FAIL)\n".format(fbw))
-                    continue
-                print("BW: {0:.2f}".format(fbw))
-                pm, gainm = get_stability_margins(num, den)
-                if pm < pm_min or isnan(pm):
-                    print("PM: {0:.2f} (FAIL)\n".format(pm))
-                    continue
-                print("PM: {0:.2f}".format(pm))
-                print("(SUCCESS)\n")
-                if ibranch*2 < best_ibias:
-                    best_ibias = ibranch*2
-                    best_op = dict(
-                        itail=best_ibias,
-                        nf_in=nf_in,
-                        nf_load=nf_load,
-                        vout=vout,
-                        vtail=vtail,
-                        gain=gain,
-                        fbw=fbw,
-                        pm=pm)
-                    break
-    if best_op == None:
-        raise ValueError("No solution")
-    return best_op
-
 def design_biasing(db_n, db_p, sim_env,
-    vdd, vout, vin_cm, nf_in, nf_load,
+    vdd, vout, vincm, nf_in, nf_load,
     vtail_target, itail_target, iref_res,
-    error_tol=0.05):
+    vb_p, vb_n, error_tol=0.05,):
     """
     Inputs:
     Returns:
@@ -145,17 +41,17 @@ def design_biasing(db_n, db_p, sim_env,
     best_op = None
     
     # operating conditions mirror that of the original diff pair
-    p_op = db_p.query(vgs=vout-vdd, vds=vtail-vdd, vbs=vss-vdd)
-    n_op = db_n.query(vgs=vout, vds=vout, vbs=0)
-    in_op = db_p.query(vgs=vincm-vtail, vds=vout-vtail, vbs=-vtail)
+    p_op = db_p.query(vgs=vout-vdd, vds=vtail_target-vdd, vbs=vb_p-vdd)
+    n_op = db_n.query(vgs=vout, vds=vout, vbs=vb_n-0)
+    in_op = db_p.query(vgs=vincm-vtail_target, vds=vout-vtail_target, vbs=vb_p-vtail_target)
     
     nf_tail = int(round(abs(itail_target/p_op['ibias'])))
     if nf_tail < 1:
-        print("NF_TAIL: {} (FAIL)\n".format(nf_tail))
+        # print("NF_TAIL: {} (FAIL)\n".format(nf_tail))
         return None
     itail_real = p_op['ibias']*nf_tail
     if (abs(itail_real)-abs(itail_target))/abs(itail_target) > error_tol:
-        print("ITAIL: {0:.2f}uA vs. {0:.2f}uA (FAIL)".format(itail_real*1e6, itail_target*1e6))
+        # print("ITAIL: {0:.2f}uA vs. {0:.2f}uA (FAIL)".format(itail_real*1e6, itail_target*1e6))
         return None
         
     # operating conditions mirror that of the original diff pair
@@ -182,17 +78,142 @@ def design_biasing(db_n, db_p, sim_env,
         iref=iref)
 
 def design_diffAmpP(db_n, db_p, sim_env,
-        vdd, cload, vincm, 
-        gain_min, fbw_min, pm_min,
-        error_tol):
+        vdd, cload, vincm, T,
+        gain_min, fbw_min, pm_min, inoiseout_std_max,
+        vb_p, vb_n, error_tol=0.05):
     """
     Inputs:
-    Returns:    
+    Returns:
     """
-    # Find the best operating point
+    # Constants
+    kBT = 1.38e-23*T
+    
+    # TODO: change hardcoded value
+    vstar_min = 0.15
+    
+    # find the best operating point
     best_ibias = float('inf')
     best_op = None
-    return
+    
+    # (loosely) constrain tail voltage
+    # TODO: replace with binary search
+    vtail_min = vincm + 2*vstar_min
+    vtail_max = vdd
+    vtail_vec = np.arange(vtail_min, vtail_max, 10e-3)
+
+    # sweep tail voltage
+    for vtail in vtail_vec:
+        # (loosely) constrain output DC voltage
+        # TODO: replace with binary search
+        vout_min = vstar_min
+        vout_max = vtail - vstar_min
+        vout_vec = np.arange(vout_min, vout_max, 10e-3)
+        # sweep output DC voltage
+        for vout in vout_vec:
+            in_op = db_p.query(vgs=vincm-vtail, vds=vout-vtail, vbs=vb_p-vtail)
+            load_op = db_n.query(vgs=vout, vds=vout, vbs=vb_n-0)
+            # TODO: constrain number of input devices
+            nf_in_min = 4
+            nf_in_max = 30
+            nf_in_vec = np.arange(nf_in_min, nf_in_max, 2)
+            for nf_in in nf_in_vec:
+                ibranch = abs(in_op['ibias']*nf_in)
+                if ibranch*2 > best_ibias:
+                    continue
+                # matching NMOS and PMOS bias current
+                nf_load = int(abs(round(ibranch/load_op['ibias'])))
+                if nf_load < 1:
+                    continue 
+                iload = load_op['ibias']*nf_load
+                ibranch_error = (abs(iload)-abs(ibranch))/abs(ibranch)
+                if ibranch_error > error_tol:
+                    continue
+                    
+                # create LTICircuit
+                amp = LTICircuit()
+                amp.add_transistor(in_op, 'out', 'in', 'gnd', 'gnd', fg=nf_in)
+                amp.add_transistor(load_op, 'out', 'gnd', 'gnd', 'gnd', fg=nf_load)
+                amp.add_cap(cload, 'out', 'gnd')
+                num, den = amp.get_num_den(in_name='in', out_name='out', in_type='v')
+                
+                gm = in_op['gm']*nf_in
+                ro = 1/(in_op['gds']*nf_in+load_op['gds']*nf_load)
+                
+                # Check against gain
+                gain = abs(num[-1]/den[-1])
+                if gain < gain_min:
+                    print("GAIN: {0:.2f} (FAIL)\n".format(gain))
+                    continue
+                print("GAIN: {0:.2f}".format(gain))
+                
+                # Check against bandwidth
+                wbw = get_w_3db(num, den)
+                if wbw == None:
+                    print("BW: None (FAIL)\n")
+                    continue
+                fbw = wbw/(2*np.pi)
+                if fbw < fbw_min:
+                    print("BW: {0:.2f} (FAIL)\n".format(fbw))
+                    continue
+                print("BW: {0:.2f}".format(fbw))
+                pm, gainm = get_stability_margins(num, den)
+                
+                # Check against phase margin
+                if pm < pm_min or isnan(pm):
+                    print("PM: {0:.2f} (FAIL)\n".format(pm))
+                    continue
+                print("PM: {0:.2f}".format(pm))
+                
+                # Check against noise
+                inoiseout_std = np.sqrt(4*kBT*(in_op['gamma']*in_op['gm']*nf_in*2 + load_op['gamma']*load_op['gm']*nf_load*2))
+                if inoiseout_std > inoiseout_std_max:
+                    print("INOISE STD: {} (FAIL)\n".format(inoiseout_std))
+                    continue
+                print("INOISE STD: {}".format(inoiseout_std))
+                
+                # Check against best bias current
+                if ibranch*2 < best_ibias:
+                    biasing_spec = dict(db_n=db_n,
+                                        db_p=db_p,
+                                        sim_env=sim_env,
+                                        vdd=vdd,
+                                        vout=vout,
+                                        vincm=vincm,
+                                        nf_in=nf_in,
+                                        nf_load=nf_load,
+                                        vtail_target=vtail,
+                                        itail_target=ibranch*2,
+                                        iref_res=10e-9,
+                                        vb_p=vb_p,
+                                        vb_n=vb_n,
+                                        error_tol=error_tol,)
+                    biasing_params = design_biasing(**biasing_spec)
+                    if biasing_params == None:
+                        print("BIASING PARAMS (FAIL)\n")
+                        continue
+                    print("(SUCCESS)\n")
+                    best_ibias = ibranch*2
+                    best_op = dict(
+                        itail=best_ibias,
+                        nf_in=nf_in,
+                        nf_load=nf_load,
+                        vout=vout,
+                        vtail=vtail,
+                        gain=gain,
+                        fbw=fbw,
+                        pm=pm,
+                        nf_tail=biasing_params['nf_tail'],
+                        nf_bias_tail=biasing_params['nf_bias_tail'],
+                        nf_bias_in=biasing_params['nf_bias_in'],
+                        nf_bias_loadM=biasing_params['nf_bias_loadM'],
+                        nf_bias_load1=biasing_params['nf_bias_load1'],
+                        iref=biasing_params['iref'],
+                        inoiseout_std=inoiseout_std
+                        )
+                    break
+    if best_op == None:
+        raise ValueError("No solution for P-in diffamp")
+    return best_op
     
 def run_main():
     interp_method = 'spline'
@@ -210,18 +231,21 @@ def run_main():
         db_n=nch_db,
         db_p=pch_db,
         sim_env=sim_env,
-        vdd=0.8,
-        cload=10e-15,
+        vdd=1.0,
+        cload=300e-15,
         vincm=0,
-        gain_min=50,
-        fbw_min=3e6,
+        T=300,
+        gain_min=10,
+        fbw_min=500e3,
+        inoiseout_std_max=1,
         pm_min=70,
+        vb_p=1.0,
+        vb_n=0,
         error_tol=0.05
         )
 
-    # amp_specs = design_inverter_tia_eqn(**specs)
-    diffPairP_specs = design_diffPairP(**specs)
-    pprint.pprint(diffPairP_specs)
+    diffAmpP_specs = design_diffAmpP(**specs)
+    pprint.pprint(diffAmpP_specs)
     print('done')
 
 if __name__ == '__main__':
