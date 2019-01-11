@@ -26,17 +26,19 @@ def get_db(spec_file, intent, interp_method='spline', sim_env='TT'):
 def calculate_Avt_Abeta(db, data_file, lch, wf, nf):
     """
     Calculates the Avt and Abeta of a process technology. This assumes
-    that these values are constant.
+    that these values are constant. run_Avt_Abeta (below) provides some
+    skeleton of how to use this.
     
     Inputs:
         db: MOS device data (from get_db)
         data_file: csv file containing vgs, vds, vbs, and sigma_voff for various
             simulation conditions.
-        lch: Channel length in meters.
-        wf: Single finger width in meters.
+        lch: Channel length in microns.
+        wf: Single finger width in microns.
         nf: Number of fingers used in the simulation.
     Returns:
-        Dictionary with Avt=Avt and Abeta=Abeta parameters.
+        Dictionary with Avt=Avt (mV/um) and
+        Abeta=Abeta (/um) parameters.
     """
     # width * length (for clarity later, both in meters)
     WL = wf*nf * lch
@@ -50,12 +52,11 @@ def calculate_Avt_Abeta(db, data_file, lch, wf, nf):
         op_info = db.query(vgs=vals.vgs, vds=vals.vds, vbs=vals.vbs)
         vstar = op_info['vstar']
         var_voff = vals.sigma_voff**2
-        print("vstar: {}".format(vstar))
-        A = np.concatenate((A, np.array([[1/WL, vstar**2/WL]])))
+        A = np.concatenate((A, np.array([[1/WL, (vstar/2)**2/WL]])))
         b = np.concatenate((b, np.array([var_voff])))
         
     x, residual, rank, s = np.linalg.lstsq(A, b)
-    Avt = np.sqrt(x[0]) # V/m
+    Avt = np.sqrt(x[0])*1e3 # mV/um
     Abeta = np.sqrt(x[1])
     return Avt, Abeta
 
@@ -115,4 +116,17 @@ def cond_print(myStr, yesPrint=True):
 		print(myStr)
 	return
 
+# -----------------------------------------------------------------
+# -------------- Miscellaneous (Modify As Necessary) --------------
+# -----------------------------------------------------------------
 
+def run_Avt_Abeta():
+    interp_method = 'spline'
+    sim_env = 'TT'
+    spec_file = 'specs_mos_char/nch_w0d5_100nm.yaml'
+    lch = 0.1
+    intent = 'lvt'
+    data_file = 'data/mos_char_nch_100nm/MOS_NCH_intent_lvt/MOS_NCH_intent_lvt_MEAS_mos_ss/nch_lvt_mismatch.csv'
+    
+    db = get_db(spec_file, intent, interp_method=interp_method, sim_env=sim_env)
+    print(calculate_Avt_Abeta(db, data_file, lch, 0.5, 1))
