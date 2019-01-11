@@ -243,10 +243,12 @@ def run_main():
         vb_n=0,
         error_tol=0.05
         )
+    dummy_op = nch_db.query(vgs=0.5, vds=0.4, vbs=0-.4)
+    pprint.pprint(dummy_op)
 
-    diffAmpP_specs = design_diffAmpP(**specs)
-    pprint.pprint(diffAmpP_specs)
-    print('done')
+#     diffAmpP_specs = design_diffAmpP(**specs)
+#     pprint.pprint(diffAmpP_specs)
+#     print('done')
 
 if __name__ == '__main__':
     run_main()
