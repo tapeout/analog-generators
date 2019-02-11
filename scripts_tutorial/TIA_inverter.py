@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Lydia Lee
+# Skeleton by Lydia Lee
 
 # ASSUMPTIONS:
 # (1) 100nm channel length, 500nm finger width.
@@ -94,19 +94,19 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
                 continue
             print("N/P: {}/{} fingers".format(nf_n, nf_p))
             # Extracting FET ss parameters and scaling by width
-            gds_n = n_op_info['gds'] * nf_n
-            cdd_n = n_op_info['cdd'] * nf_n
-            gm_n  = n_op_info['gm']  * nf_n
-            cgd_n = n_op_info['cgd'] * nf_n
-            cgs_n = n_op_info['cgs'] * nf_n
-            cgg_n = n_op_info['cgg'] * nf_n
+            gds_n = ### YOUR CODE HERE ###
+            cdd_n = ### YOUR CODE HERE ###
+            gm_n  = ### YOUR CODE HERE ###
+            cgd_n = ### YOUR CODE HERE ###
+            cgs_n = ### YOUR CODE HERE ###
+            cgg_n = ### YOUR CODE HERE ###
 
-            gds_p = p_op_info['gds'] * nf_p
-            cdd_p = p_op_info['cdd'] * nf_p
-            gm_p  = p_op_info['gm']  * nf_p
-            cgd_p = p_op_info['cgd'] * nf_p
-            cgs_p = p_op_info['cgs'] * nf_p
-            cgg_p = n_op_info['cgg'] * nf_p
+            gds_p = ### YOUR CODE HERE ###
+            cdd_p = ### YOUR CODE HERE ###
+            gm_p  = ### YOUR CODE HERE ###
+            cgd_p = ### YOUR CODE HERE ###
+            cgs_p = ### YOUR CODE HERE ###
+            cgg_p = ### YOUR CODE HERE ###
             # Extracting amp ss parameters
             gm = abs(gm_n) + abs(gm_p)
             ro = 1/abs(gds_n + gds_p)
@@ -117,7 +117,7 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
             rf_vec = np.arange(rf_min, rf_min*3, rf_res)
             # Sweep values of Rf to check f3dB and PM spec
             for rf in rf_vec:
-                rdc = -A0*rf/(1+A0) + ro/(1+A0)
+                rdc = ### YOUR CODE HERE ###
                 miller = (1-gm*rf)/(ro+rf)*ro
                 cin = cpd + (1-miller)*(cgd_n + cgd_p) + cgs_n + cgs_p # cpd + cgg_p + cgg_n
                 if abs(rdc) < rdc_min-1e-8:
@@ -130,14 +130,14 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
                     (np.sqrt(ro/rf * cin/cout) \
                     + np.sqrt(ro/rf * cout/cin) \
                     + np.sqrt(rf/ro * cin/cout))
-                wbw = wn*np.sqrt(np.sqrt((2*zeta**2 - 1)**2 + 1) - (2*zeta**2 - 1))
+                wbw = ### YOUR CODE HERE ###
                 fbw = wbw/(2*np.pi)
                 if fbw < fbw_min or isnan(fbw):
                     print("BW: {} (FAIL)\n".format(fbw))
                     break
                 else:
                     print("BW: {}".format(fbw))
-                pm = np.degrees(np.arctan(2*zeta / np.sqrt(np.sqrt(4*zeta**4+1) - 2*zeta**2)))
+                pm = np.degrees(### YOUR CODE HERE ###)
                 if pm < pm_min or isnan(pm):
                     print("PM: {0:.2f} (FAIL)\n".format(pm))
                     continue
@@ -272,11 +272,9 @@ def design_inverter_tia_lti(db_n, db_p, sim_env,
             for rf in rf_vec:
                 # Circuit for GBW
                 circuit = LTICircuit()
-                circuit.add_transistor(n_op_info, 'out', 'in', 'gnd', fg=nf_n)
-                circuit.add_transistor(p_op_info, 'out', 'in', 'gnd', fg=nf_p)
-                circuit.add_res(rf, 'in', 'out')
-                circuit.add_cap(cpd, 'in', 'gnd')
-                circuit.add_cap(cload, 'out', 'gnd')
+                ######################
+                ### YOUR CODE HERE ###
+                ######################
                 # Determining if it meets spec
                 num, den = circuit.get_num_den(in_name='in', out_name='out', in_type='i')
                 rdc = num[-1]/den[-1]
@@ -352,7 +350,7 @@ def run_main():
         )
 
     # amp_specs = design_inverter_tia_eqn(**specs)
-    amp_specs = design_inverter_tia_lti(**specs)
+    # amp_specs = design_inverter_tia_lti(**specs)
     pprint.pprint(amp_specs)
     print('done')
 

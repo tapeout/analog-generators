@@ -62,7 +62,8 @@ def calculate_Avt_Abeta(db, data_file, lch, wf, nf):
 
 def estimate_vth(db, vdd, vbs, mos_type="nmos"):
     """
-    Estimates the threshold voltage of a MOSFET using the assumption
+    Estimates the absolute value of the threshold voltage of a
+    MOSFET using the assumption
     Vov = Vstar = Vgs - Vth (for NMOS)
     
     Inputs:
@@ -81,7 +82,7 @@ def estimate_vth(db, vdd, vbs, mos_type="nmos"):
         vgs = -vgs
         vds = -vds
     op = db.query(vgs=vgs, vds=vds, vbs=vbs)
-    return vgs-op['vstar']
+    return abs(vgs) - op['vstar']
 
 def parallel(*args):
 	"""
