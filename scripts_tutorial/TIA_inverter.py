@@ -94,7 +94,7 @@ def design_inverter_tia_eqn(db_n, db_p, sim_env,
                 continue
             print("N/P: {}/{} fingers".format(nf_n, nf_p))
             # Extracting FET ss parameters and scaling by width
-            gds_n = ### YOUR CODE HERE ###
+            gds_n = n_op_info['gds'] * nf_n
             cdd_n = ### YOUR CODE HERE ###
             gm_n  = ### YOUR CODE HERE ###
             cgd_n = ### YOUR CODE HERE ###
@@ -348,7 +348,8 @@ def run_main():
         vb_n=0,
         vb_p=0
         )
-
+    ### YOUR CODE HERE ###
+    ### Uncomment out the appropriate line depending on which function you want to run ###
     # amp_specs = design_inverter_tia_eqn(**specs)
     # amp_specs = design_inverter_tia_lti(**specs)
     pprint.pprint(amp_specs)
