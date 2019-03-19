@@ -35,7 +35,7 @@ def get_db(spec_file, intent, interp_method='spline', sim_env='TT'):
 def design_LNA_gm(db_n, sim_env,
         vdd, freq, re_Zs, 
         c=0.45, delta=4/3, alpha=0.7,
-        vds_target=0.5, ls_max=2e-9,
+        vds_target=0.5, ls_max=2e-9, ibias_max=np.inf,
         vb_n=0, error_tol=0.05):
     """
     Chooses sizing for LNA input Gm device
@@ -55,6 +55,7 @@ def design_LNA_gm(db_n, sim_env,
         alpha:      Float. gm/gd0 ratio for noise calculations. 1 for long-channel devices.
         vds_target: Float. Target drain-source voltage for Gm device.
         ls_max:     Float. Maximum allowable inductance in henrys.
+        ibias_max:  Float. Maximum bias current in amperes allowed for the topology.
         vb_n:       Float. Body/back-gate voltage for NMOS devices in volts.
         error_tol:  Float. Error tolerance (in fraction) for converging calculations
                     in the function.
@@ -72,9 +73,16 @@ def design_LNA_gm(db_n, sim_env,
         im_Zopt:    Float. Expected Im(Zopt) in ohms.
         re_Zin:     Float. Expected Re(Zin) in ohms.
     """
+    # for vgs in vgs_vec:
+    vgs = vds_target
+    op_info = db_n.query(vgs=vgs, vds=vds_target, vbs=vb_n-0)
+    cond_print("GM: {}".format(op_info['gm']), debug_mode)
+    
     # TODO: How to not hardcode this?
     nf_MNA_min = 1
-    nf_MNA_max = 100
+    nf_MNA_max = np.floor(ibias_max/op_info['ibias'])
+    cond_print("NF_MNA_MAX: {}".format(nf_MNA_max), debug_mode)
+    # nf_MNA_max = 100
     nf_MNA_vec = np.arange(nf_MNA_min, nf_MNA_max, 1)
     
     vstar_min = 0.15
@@ -88,10 +96,7 @@ def design_LNA_gm(db_n, sim_env,
     cgs = 0
     cex = 0
     
-    # for vgs in vgs_vec:
-    vgs = vds_target
-    op_info = db_n.query(vgs=vgs, vds=vds_target, vbs=vb_n-0)
-    cond_print("GM: {}".format(op_info['gm']), debug_mode)
+    
     # Fudge factor
     omega_T = 100e9*2*np.pi #op_info['gm']/op_info['cgs']/26 #100e9*2*np.pi
     cond_print("wT: {}".format(omega_T), debug_mode)
@@ -113,7 +118,7 @@ def design_LNA_gm(db_n, sim_env,
         cond_print("Max size alone insufficient, checking CEX...", debug_mode)
         # See if it's possible with the max feasible cex. If it is,
         # binary search. If it isn't, continue the loop.
-        cex_max = 1e-12
+        cex_max = 10e-12
         ct_max = cgs_max + cex_max
         Zopt_den_maxext = omega * cgs_max \
                 * ((alpha**2 * delta * (1-c**2))/(5*gamma) \
@@ -429,6 +434,7 @@ def run_gm():
         delta=4/3,
         alpha=0.7,
         vds_target=0.5,
+        ibias_max=12e-3,
         vb_n=0,
         error_tol=0.05)
     
@@ -474,6 +480,6 @@ def run_main():
 
 if __name__ == '__main__':
     # run_cascode()
-    # run_gm()
-    run_bias()
+    run_gm()
+    # run_bias()
     # run_main()
