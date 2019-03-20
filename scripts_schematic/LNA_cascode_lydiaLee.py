@@ -72,21 +72,22 @@ def design_LNA_gm(db_n, sim_env,
         re_Zopt:    Float. Expected Re(Zopt) in ohms.
         im_Zopt:    Float. Expected Im(Zopt) in ohms.
         re_Zin:     Float. Expected Re(Zin) in ohms.
+        Gm:         Float. Conductance in S of the device with degeneration.
     """
     # for vgs in vgs_vec:
     vgs = vds_target
     op_info = db_n.query(vgs=vgs, vds=vds_target, vbs=vb_n-0)
     cond_print("GM: {}".format(op_info['gm']), debug_mode)
     
-    # TODO: How to not hardcode this?
+    # Determine the max number of fingers allowable within the power budget
     nf_MNA_min = 1
     nf_MNA_max = np.floor(ibias_max/op_info['ibias'])
     cond_print("NF_MNA_MAX: {}".format(nf_MNA_max), debug_mode)
-    # nf_MNA_max = 100
     nf_MNA_vec = np.arange(nf_MNA_min, nf_MNA_max, 1)
     
     vstar_min = 0.15
     
+    # TODO: How to avoid hardcoding this?
     vgs_min = 0.3
     vgs_max = vdd - vstar_min
     vgs_vec = np.arange(vgs_min, vgs_max, 10e-3)
@@ -94,12 +95,9 @@ def design_LNA_gm(db_n, sim_env,
     
     omega = freq*2*np.pi
     cgs = 0
-    cex = 0
+    cex = 0 
     
-    
-    # Fudge factor
-    omega_T = 100e9*2*np.pi #op_info['gm']/op_info['cgs']/26 #100e9*2*np.pi
-    cond_print("wT: {}".format(omega_T), debug_mode)
+    # omega_T = 100e9*2*np.pi #op_info['gm']/op_info['cgs']/26 #100e9*2*np.pi
     gamma = op_info['gamma']
 
     # Check if max sizing of device can meet spec with Cex constrained
@@ -118,7 +116,7 @@ def design_LNA_gm(db_n, sim_env,
         cond_print("Max size alone insufficient, checking CEX...", debug_mode)
         # See if it's possible with the max feasible cex. If it is,
         # binary search. If it isn't, continue the loop.
-        cex_max = 10e-12
+        cex_max = 5e-12
         ct_max = cgs_max + cex_max
         Zopt_den_maxext = omega * cgs_max \
                 * ((alpha**2 * delta * (1-c**2))/(5*gamma) \
@@ -143,24 +141,34 @@ def design_LNA_gm(db_n, sim_env,
                 cex_iter.up()
             else:
                 cex_iter.down()
-        cond_print("Real portion matched. Checking Ls sizing...", debug_mode)
-        # Calculate Ls to match the imaginary portion of Zopt
-        im_Zopt_LHS = (ct/cgs_max*alpha*c*np.sqrt(delta/(5*gamma)))/Zopt_den
-        # ls = 1/omega * (im_Zopt_LHS - im_Zs)
-        ls = ct/(op_info['gm']*nf_MNA_max) * re_Zs # np.sqrt(alpha**2 * delta * (1-c**2)/(5*gamma))/(omega * omega_T * ct)
+        cond_print("Re(Zs) and Re(Zopt) matched...", debug_mode)
+        cond_print("Matching Re(Zin) = Re(Zs) = Re(Zopt)...", debug_mode)
+        
+        # Calculate Ls to match the real part of Zin
+        ls = ct/(op_info['gm']*nf_MNA_max) * re_Zs
         if ls <= ls_max:
-            im_Zopt = (ct/cgs_max*alpha*c*np.sqrt(delta/(5*gamma)))/Zopt_den_maxsize - omega*ls
-            lg = -1/(omega**2*ct) + 2*ls + im_Zopt_LHS/omega # im_Zopt/omega
+            im_Zopt_LHS = (ct/cgs_max*alpha*c*np.sqrt(delta/(5*gamma)))/Zopt_den_maxsize
+            im_Zopt = im_Zopt_LHS - omega*ls
+            # lg = abs(1/omega * im_Zopt_LHS - 1/(omega**2 * ct))
+            # lg = -1/(omega**2*ct) + 2*ls + im_Zopt_LHS/omega # im_Zopt/omega
             re_Zin = op_info['gm']*nf_MNA_max*ls/ct
+            
+            gm = op_info['gm']*nf_MNA_max
+            ro = 1/(nf_MNA_max * op_info['gds'])
+            rs = omega*ls
+            
+            Gm = (gm*ro)/(ro + gm*ro*rs + rs)
+            
             return dict(nf_MNA=nf_MNA_max,
                         ls=ls,
                         vgs=vgs,
-                        lg=lg,
+                        lg='Tuning required',
                         cex=cex,
                         ibias=op_info['ibias'] * nf_MNA_max,
                         re_Zopt=re_Zopt,
                         im_Zopt=im_Zopt,
-                        re_Zin=re_Zin)
+                        re_Zin=re_Zin,
+                        Gm=Gm)
         raise ValueError("No solution for gm stage with max sizing, non-max Cex (ginormo inductor). Adjust biasing.")
     # If you didn't need the maximum sizing of the device, get as 
     # close as possible without overshooting with Cgs, then fine-tune with Cex.
@@ -208,6 +216,13 @@ def design_LNA_gm(db_n, sim_env,
                 im_Zopt = (ct/cgs*alpha*c*np.sqrt(delta/(5*gamma)))/Zopt_den - omega*ls
                 lg = -1/(omega**2*ct) + 2*ls + im_Zopt_LHS/omega # 1/omega * im_Zopt
                 re_Zin = op_info['gm']*nf_MNA*ls/ct
+                
+                gm = op_info['gm']*nf_MNA
+                ro = 1/(nf_MNA * op_info['gds'])
+                rs = omega*ls
+            
+                Gm = (gm*ro)/(ro + gm*ro*rs + rs)
+                
                 return dict(nf_MNA=nf_MNA,
                     ls=ls,
                     vgs=vgs,
@@ -216,7 +231,8 @@ def design_LNA_gm(db_n, sim_env,
                     ibias=op_info['ibias'] * nf_MNA,
                     re_Zopt=re_Zopt,
                     im_Zopt=im_Zopt,
-                    re_Zin=re_Zin)
+                    re_Zin=re_Zin,
+                    Gm=Gm)
             else:
                 cond_print("(FAIL) Inductor: {}".format(ls), debug_mode)
         else:
@@ -234,6 +250,12 @@ def design_LNA_gm(db_n, sim_env,
         im_Zopt = (ct/cgs_temp*alpha*c*np.sqrt(delta/(5*gamma)))/Zopt_den - omega*ls
         lg = -1/(omega**2*ct) + 2*ls + im_Zopt_LHS/omega #1/omega * im_Zopt
         re_Zin = op_info['gm']*nf_MNA_max*ls/ct
+        
+        gm = op_info['gm']*nf_MNA
+        ro = 1/(nf_MNA * op_info['gds'])
+        rs = omega*ls
+    
+        Gm = (gm*ro)/(ro + gm*ro*rs + rs)
         return dict(nf_MNA=nf_MNA,
                     ls=ls,
                     vgs=vgs,
@@ -242,7 +264,8 @@ def design_LNA_gm(db_n, sim_env,
                     ibias=op_info['ibias'] * nf_MNA,
                     re_Zopt=re_Zopt,
                     im_Zopt=im_Zopt,
-                    re_Zin=re_Zin)
+                    re_Zin=re_Zin,
+                    Gm=Gm)
     raise ValueError("No solution for gm stage (ginormo inductor). Adjust biasing.")
     
 def design_LNA_bias(db_n, sim_env,
@@ -284,7 +307,9 @@ def design_LNA_bias(db_n, sim_env,
     raise ValueError("No solution for biasing.")
 
 def design_LNA_output(db_n, sim_env,
-    vdd, vmid, cb, ibias_target,
+    vdd, vmid, cb, freq,
+    ibias_target, gain_target,
+    gm_input_device, 
     vb_n, error_tol=0.05):
     """
     Inputs:
@@ -294,7 +319,10 @@ def design_LNA_output(db_n, sim_env,
         vmid:           Float. Source voltage of the cascode device in volts.
         cb:             Float. Capacitance attached to the gate of the cascode 
                         device in farads.
+        freq:           Float. Operating frequency in Hertz.
         ibias_target:   Float. Bias current in amperes for the cascode device.
+        gain_target:    Float. Gain in V/V.
+        gm_input_device:Float. gm in S of the input gm device.
         vb_n:           Float. Body/back-gate voltage for NMOS devices in volts.
         error_tol:      Float. Error tolerance (in fraction) for converging calculations
                         in the function.
@@ -305,8 +333,13 @@ def design_LNA_output(db_n, sim_env,
         nf_MNC: Integer. Number of fingers for cascode device assuming
                 fixed finger width.
         vcas:   Float. Gate voltage for cascode device in volts.
-        lo:     Float. Output inductance in henrys.
+        lo_min: Float. Minimum required output inductance in henrys.
     """
+    omega = 2*np.pi*freq
+    
+    # Specifying minimum Zout
+    zo_min = gain_target/gm_input_device
+    
     # TODO: How to avoid hardcoding this?
     vstar_min = 0.15
     vstar_max = (vdd-vmid)-vstar_min
@@ -321,10 +354,12 @@ def design_LNA_output(db_n, sim_env,
         error = abs(ibias_realsies-ibias_target)/ibias_target
         if error <= error_tol:
             vcas = op_info['vgs'] + vmid
+            if vcas > vdd:
+                continue
             cond_print(1/(op_info['gm']*nf_MNC), debug_mode)
             return dict(nf_MNC=nf_MNC,
                         vcas=vcas,
-                        lo='Fiddling required')
+                        lo_min=zo_min/omega)
     raise ValueError("No solution for output stage.")
     
 
@@ -454,7 +489,10 @@ def run_cascode():
                 vdd=1.2,
                 vmid=0.5,
                 cb=20e-12,
-                ibias_target=1.359e-3,
+                freq=2.5e9,
+                ibias_target=0.01198820243579913,
+                gain_target=10**(15/20),
+                gm_input_device=0.05065989451997717,
                 vb_n=0,
                 error_tol=0.05)
     
@@ -479,7 +517,7 @@ def run_main():
     print('done')
 
 if __name__ == '__main__':
-    # run_cascode()
-    run_gm()
+    run_cascode()
+    # run_gm()
     # run_bias()
     # run_main()
