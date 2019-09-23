@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import pandas as pd
-from verification_ec.mos.query import MOSDBDiscrete
+from verification.mos.query import MOSDBDiscrete
 
 # ---------------------------------------
 # -------------- Constants --------------
