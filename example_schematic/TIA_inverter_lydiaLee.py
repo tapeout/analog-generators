@@ -2,11 +2,8 @@
 # Lydia Lee
 
 # ASSUMPTIONS:
-# (1) 100nm channel length, 500nm finger width.
-# (2) LVT devices
-# (3) All NMOS devices share a well, all PMOS devices share a well
-# (4) 300K
-# (5) TT process corner
+# (1) Same channel length between N- and PMOS, fixed finger width.
+# (2) All NMOS devices share a well, all PMOS devices share a well
 
 import pprint
 
@@ -15,18 +12,8 @@ import scipy.optimize as sciopt
 
 from math import isnan
 from bag.util.search import BinaryIterator
-from verification_ec.mos.query import MOSDBDiscrete
 from scipy import signal
 from bag.data.lti import LTICircuit, get_w_3db, get_stability_margins
-
-def get_db(spec_file, intent, interp_method='spline', sim_env='TT'):
-    # initialize transistor database from simulation data
-    mos_db = MOSDBDiscrete([spec_file], interp_method=interp_method)
-    # set process corners
-    mos_db.env_list = [sim_env]
-    # set layout parameters
-    mos_db.set_dsn_params(intent=intent)
-    return mos_db
 
 def design_inverter_tia_eqn(db_n, db_p, sim_env,
         vg_res, rf_res,
