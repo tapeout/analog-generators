@@ -6,7 +6,7 @@ from verification.mos.query import MOSDBDiscrete
 # ---------------------------------------
 # -------------- Constants --------------
 # ---------------------------------------
-kB = 1.38e-23
+kB = 1.38e-23 # J/K, 8.617e-5 eV/K
 
 # -----------------------------------------------------
 # -------------- BAG-Necessary Functions --------------
@@ -32,12 +32,12 @@ def calculate_Avt_Abeta(db, data_file, lch, wf, nf):
     Inputs:
         db: MOS device data (from get_db)
         data_file: csv file containing vgs, vds, vbs, and sigma_voff for various
-            simulation conditions.
+            simulation conditions. Values should be in volts.
         lch: Channel length in microns.
         wf: Single finger width in microns.
         nf: Number of fingers used in the simulation.
     Returns:
-        Dictionary with Avt=Avt (mV/um) and
+        Two values. Avt=Avt (mV/um) and
         Abeta=Abeta (/um) parameters.
     """
     # width * length (for clarity later, both in meters)
@@ -97,8 +97,57 @@ def parallel(*args):
 		return 0
 
 def zero_crossing(lst):
-	return np.where(np.diff(np.sign(lst)))[0][0]
+    return np.where(np.diff(np.sign(lst)))[0][0]
 
+def verify_ratio(ibase_A, ibase_B, nf_A,
+    error_tol):
+    '''
+    Determines if a particular device sizing pairing falls within
+    error requirements and is feasible.
+    Inputs:
+        ibase_A/B:  Float. The drain current of a single A- or B-device.
+        nf_A:       Integer. W of A.
+        error_tol:  Float. Fractional tolerance for ibias error when computing 
+                    the device sizing ratio.
+    Outputs:
+        Two arguments.
+        (1) Boolean. True if the ratio is possible and meets the error 
+            tolerance. False otherwise.
+        (2) nf_B. Integer indicating the sizing of the second device. 0 if 
+            invalid.
+    '''
+    # 
+    B_to_A = ibase_A/ibase_B
+    
+    # Check if it's possible to achieve the correct ratio with 
+    # physical device sizes
+    nf_B = int(round(nf_A * B_to_A))
+    
+    # Is any device now <1 minimum size FET?
+    if nf_B < 1:
+        return False, nf_B
+
+    # Check current mismatch given quantization        
+    id_A = nf_A * ibase_A
+    id_B = nf_B * ibase_B
+    
+    error = (abs(id_A) - abs(id_B))/abs(id_A)
+    
+    if abs(error) > error_tol:
+        # print("\t\tERROR TOLERANCE: {0}".format(abs(error)))
+        return False, nf_B
+        
+    return True, nf_B
+
+def calculate_Nsigma(cyield):
+    '''
+    Inputs:
+        cyield: Float <= 1. The fractional yield of a system.
+    Outputs:
+        Returns the (float) number of standard deviations to target for 
+        reliability when simulating. 
+    '''
+    return np.sqrt(2)*special.erfinv(cyield))
 
 # -------------------------------------------------
 # -------------- Debugging Utilities --------------
@@ -120,14 +169,3 @@ def cond_print(myStr, yesPrint=True):
 # -----------------------------------------------------------------
 # -------------- Miscellaneous (Modify As Necessary) --------------
 # -----------------------------------------------------------------
-
-def run_Avt_Abeta():
-    interp_method = 'spline'
-    sim_env = 'TT'
-    spec_file = 'specs_mos_char/nch_w0d5_100nm.yaml'
-    lch = 0.1
-    intent = 'lvt'
-    data_file = 'data/mos_char_nch_100nm/MOS_NCH_intent_lvt/MOS_NCH_intent_lvt_MEAS_mos_ss/nch_lvt_mismatch.csv'
-    
-    db = get_db(spec_file, intent, interp_method=interp_method, sim_env=sim_env)
-    print(calculate_Avt_Abeta(db, data_file, lch, 0.5, 1))

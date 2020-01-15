@@ -1,22 +1,16 @@
 # -*- coding: utf-8 -*-
 
-import pprint
 import numpy as np
-import scipy as sp
-import scipy.optimize as sciopt
-from scipy import signal
-from math import isnan
-from helper_functions import *
 
-from bag.util.search import BinaryIterator
+from bag.util.search import FloatBinaryIterator
 from bag.data.lti import LTICircuit, get_w_3db, get_stability_margins
 
 def design_TIA_inverter(db_n, db_p, sim_env,
         vg_res, rf_res,
-        vdd_vec, cpd, cload, 
+        vdd_nom, vdd_vec, cpd, cload, 
         rdc_min, fbw_min, pm_min, BER_max,
         vos, isw_pkpk,
-        vb_n, vb_p, error_tol=0.001, ibias_max=20e-6):
+        vb_n, vb_p, error_tol=0.05, ibias_max=20e-6):
     """
     Designs a transimpedance amplifier with an inverter amplifier
     in resistive feedback. Uses the LTICircuit functionality.
@@ -65,18 +59,16 @@ def design_TIA_inverter(db_n, db_p, sim_env,
     vg_vec = np.arange(0, vdd_nom, vg_res)
     
     for vg in vg_vec:
-        vdd_vd_ratio = vdd_nom/vg
         n_op_info = db_n.query(vgs=vg, vds=vg, vbs=vb_n-0)
-        p_op_info = db_p.query(vgs=vg-vdd_nom, vds=vg-vdd_nomvbs=vb_p-vdd_nom)
+        p_op_info = db_p.query(vgs=vg-vdd_nom, vds=vg-vdd_nom, vbs=vb_p-vdd_nom)
         
         iref_n = n_op_info['ibias']
         iref_p = p_op_info['ibias']
         
         # Calculate the ratio of NMOS to PMOS based
         # on drive current and bias point
-        pn_match = abs(iref_n/iref_p)
-        pn_ratio = pn_match/(vdd_vd_ratio-1)
-        if pn_ratio == 0:
+        pn_ratio = abs(iref_n/iref_p)
+        if pn_ratio < 1:
             continue
         
         if np.isinf(ibias_max):
@@ -92,13 +84,16 @@ def design_TIA_inverter(db_n, db_p, sim_env,
             nf_p = int(round(nf_n*pn_ratio))
             if nf_p <= 0:
                 continue
-                
+            elif nf_p > nf_n_max:
+                break
+
             ibias_n = iref_n * nf_n
             ibias_p = iref_p * nf_p
-            ibias_erorr = abs(ibias_n-ibias_p)/min(abs(ibias_n), abs(ibias_p))
+            ibias_error = (abs(ibias_n)-abs(ibias_p))/min(abs(ibias_n), abs(ibias_p))
             if ibias_error > error_tol:
+                # ("ibias_error: {}".format(ibias_error))
                 continue
-            
+
             # Getting small signal parameters to constrain Rf
             inv = LTICircuit()
             inv.add_transistor(n_op_info, 'out', 'in', 'gnd', fg=nf_n)
@@ -113,20 +108,19 @@ def design_TIA_inverter(db_n, db_p, sim_env,
             
             # Assume Rdc is negative, bound Rf
             rf_min = max(rdc_min*(1+A0)/A0 + ro/A0, 0)
-            rf_vec = np.arange(rf_min, rdc_min*5, rf_res)
+            rf_vec = np.arange(rf_min, rdc_min*2, rf_res)
             for rf in rf_vec:
                 # With all parameters, check if it meets small signal spec
                 meets_SS, SS_vals = verify_TIA_inverter_SS(n_op_info, p_op_info,
                                 nf_n, nf_p, rf, cpd, cload,
                                 rdc_min, fbw_min, pm_min)
-                
-                # Witha ll parameters, estimate if it will meet noise spec
+                # With all parameters, estimate if it will meet noise spec
                 meets_noise, BER = verify_TIA_inverter_BER(n_op_info, p_op_info, 
                     nf_n, nf_p,
                     rf, cpd, cload,
                     BER_max, vos, isw_pkpk)
                 
-                meets_spec = meets_SS and meets_noise
+                meets_spec = meets_SS # and meets_noise
                 # If it meets small signal spec, append it to the list
                 # of possibilities
                 if meets_spec:
@@ -138,8 +132,11 @@ def design_TIA_inverter(db_n, db_p, sim_env,
                         rdc=SS_vals['rdc'],
                         fbw=SS_vals['fbw'],
                         pm=SS_vals['pm'],
-                        ibias=(ibias_n+ibias_p)/2),
-                        BER=BER)
+                        ibias=ibias_n,
+                        BER=BER))
+                elif SS_vals['fbw'] != None and SS_vals['fbw'] < fbw_min:
+                    # Increasing resistor size won't help bandwidth
+                    break
     
     # Go through all possibilities which work at the nominal voltage
     # and ensure functionality at other bias voltages
@@ -154,10 +151,21 @@ def design_TIA_inverter(db_n, db_p, sim_env,
             vg = new_op_dict['vb']
             n_op = new_op_dict['n_op']
             p_op = new_op_dict['p_op']
-            meets_SS, scratch = verify_TIA_inverter_SS(n_op_info, p_op_info,
+            
+            # Confirm small signal spec is met
+            meets_SS, scratch = verify_TIA_inverter_SS(n_op, p_op,
                                 nf_n, nf_p, rf, cpd, cload,
                                 rdc_min, fbw_min, pm_min)
-            if not meets_SS:
+            
+            # Confirm noise spec is met
+            meets_noise, BER = verify_TIA_inverter_BER(n_op, p_op, 
+                    nf_n, nf_p,
+                    rf, cpd, cload,
+                    BER_max, vos, isw_pkpk)
+                    
+            meets_spec = meets_SS # and meets_noise
+            
+            if not meets_spec:
                 possibilities.remove(candidate)
                 break
     
@@ -224,7 +232,7 @@ def choose_op_comparison(op1, op2):
     return op1
 
 
-def vary_supply(vdd, db_n, db_p, nf_n, nf_p, vb_n, vb_p, error_tol=0.001):
+def vary_supply(vdd, db_n, db_p, nf_n, nf_p, vb_n, vb_p, error_tol=0.01):
     """
     Inputs:
         vdd:        Float. Supply voltage (V).
@@ -248,28 +256,29 @@ def vary_supply(vdd, db_n, db_p, nf_n, nf_p, vb_n, vb_p, error_tol=0.001):
         ValueError if no convergence is found (this means something)
         is wrong with the code.
     """
-    vb_iter = BinaryIterator(0, vdd, step=vdd/2**10)
-    while vb_iter.has_next()
+    vb_iter = FloatBinaryIterator(low=0, high=vdd, tol=0, search_step=vdd/2**10)
+    vb = vb_iter.get_next()
+    
+    while vb_iter.has_next():
         vb = vb_iter.get_next()
         
         # Get the operating points
-        n_op = db_n.query(vgs=vb, vds=vg, vbs=vb_n-0)
-        p_op = db_p.query(vgs=vb-vdd, vds=vg-vdd, vbs=vb_p-vdd)
+        n_op = db_n.query(vgs=vb, vds=vb, vbs=vb_n-0)
+        p_op = db_p.query(vgs=vb-vdd, vds=vb-vdd, vbs=vb_p-vdd)
         
         # Check if the bias currents match
         # If they do, finish
         # If the NMOS current is higher, lower the bias voltage
         # If the PMOS current is higher, raise the bias voltage
-        ibias_n = n_op_info['ibias']*nf_n
-        ibias_p = p_op_info['ibias']*nf_p
+        ibias_n = n_op['ibias']*nf_n
+        ibias_p = p_op['ibias']*nf_p
         
-        ierror = abs(ibias_n-ibias_p)/min(ibias_n, ibias_p)
-        
+        ierror = (abs(ibias_n)-abs(ibias_p))/min(abs(ibias_n), abs(ibias_p))
         if ierror <= error_tol:
             return dict(vb=vb,
                         ibias=(ibias_n+ibias_p)/2,
                         n_op=n_op,
-                        p_op)
+                        p_op=p_op)
         elif ibias_n > ibias_p:
             vb_iter.down()
         else:
@@ -303,13 +312,17 @@ def verify_TIA_inverter_SS(
     gds_p = p_op_info['gds'] * nf_p
     gds = gds_n + gds_p
     
-    cgg_n = n_op_info['cgg'] * nf_n
-    cgg_p = p_op_info['cgg'] * nf_p
-    cgg = cgg_n + cgg_p
+    gm_n = n_op_info['gm'] * nf_n
+    gm_p = p_op_info['gm'] * nf_p
+    gm = gm_n + gm_p
     
-    cdd_n = n_op_info['cd'] * nf_n
-    cdd_p = p_op_info['cdd'] * nf_p
-    cdd = cdd_n + cdd_p
+    cgs_n = n_op_info['cgs'] * nf_n
+    cgs_p = p_op_info['cgs'] * nf_p
+    cgs = cgs_n + cgs_p
+    
+    cds_n = n_op_info['cds'] * nf_n
+    cds_p = p_op_info['cds'] * nf_p
+    cds = cds_n + cds_p
     
     cgd_n = n_op_info['cgd'] * nf_n
     cgd_p = p_op_info['cgd'] * nf_p
@@ -328,26 +341,39 @@ def verify_TIA_inverter_SS(
     rdc = num[-1]/den[-1]
    
     if abs(round(rdc)) < round(rdc_min):
+        print("GAIN:\t{0} (FAIL)\n".format(rdc))
         return False, dict(rdc=rdc,fbw=None, pm=None)
 
     # Check bandwidth
     fbw = get_w_3db(num, den)/(2*np.pi)
-    if fbw < fbw_min or isnan(fbw):
+    if fbw < fbw_min or np.isnan(fbw):
+        print("BW:\t{0} (FAIL)\n".format(fbw))
         return False, dict(rdc=rdc,fbw=fbw, pm=None)
 
     # Check phase margin by constructing an LTICircuit first
     circuit2 = LTICircuit()
+    """circuit2.add_transistor(n_op_info, 'out', 'in', 'gnd', fg=nf_n)
+    circuit2.add_transistor(p_op_info, 'out', 'in', 'gnd', fg=nf_p)
+    circuit2.add_cap(cpd, 'in', 'gnd')
+    circuit2.add_cap(cload, 'out', 'gnd')
+    circuit2.add_res(rf, 'in', 'break')
+    # Cancel Cgd to correctly break loop
+    circuit2.add_cap(-cgd, 'in' , 'out')
+    circuit.add_cap(cgd, 'in', 'break')"""
+    
+    
     circuit2.add_conductance(gds, 'out', 'gnd')
-    circuit2.add_cap(cgg+cpd, 'in', 'gnd')
-    circuit2.add_cap(cdd+cload, 'out', 'gnd')
+    circuit2.add_cap(cgs+cpd, 'in', 'gnd')
+    circuit2.add_cap(cds+cload, 'out', 'gnd')
     circuit2.add_cap(cgd, 'in', 'out')
     circuit2.add_res(rf, 'in', 'out')
     
-    loopBreak = circuit2.get_transfer_function(in_name='out', out_name='in', in_type='i')
+    loopBreak = circuit2.get_transfer_function(in_name='in', out_name='out', in_type='i')
     pm, gainm = get_stability_margins(loopBreak.num*gm, loopBreak.den)
-    if pm < pm_min or isnan(pm):
+    if pm < pm_min or np.isnan(pm):
+        print("PM:\t{0} (FAIL)\n".format(pm))
         return False, dict(rdc=rdc,fbw=fbw, pm=pm)
-             
+    print("SUCCESS\n")
     return True, dict(rdc=rdc, fbw=fbw, pm=pm)
 
 
@@ -372,6 +398,7 @@ def verify_TIA_inverter_BER(n_op_info, p_op_info, nf_n, nf_p,
         The first is True if the spec is met, False otherwise.
         The second is the BER (float).
     """
+    return True, 0
     # Getting relevant small-signal parameters
     gds_n   = n_op_info['gds'] * nf_n
     cdd_n   = n_op_info['cdd'] * nf_n
