@@ -4,6 +4,7 @@ import numpy as np
 
 from bag.util.search import FloatBinaryIterator
 from bag.data.lti import LTICircuit, get_w_3db, get_stability_margins
+from helper_funcs import verify_ratio
 
 def design_TIA_inverter(db_n, db_p, sim_env,
         vg_res, rf_res,
@@ -59,39 +60,25 @@ def design_TIA_inverter(db_n, db_p, sim_env,
     vg_vec = np.arange(0, vdd_nom, vg_res)
     
     for vg in vg_vec:
+        print("VIN:\t{0}".format(vg))
         n_op_info = db_n.query(vgs=vg, vds=vg, vbs=vb_n-0)
         p_op_info = db_p.query(vgs=vg-vdd_nom, vds=vg-vdd_nom, vbs=vb_p-vdd_nom)
         
-        iref_n = n_op_info['ibias']
-        iref_p = p_op_info['ibias']
-        
-        # Calculate the ratio of NMOS to PMOS based
-        # on drive current and bias point
-        pn_ratio = abs(iref_n/iref_p)
-        if pn_ratio < 1:
-            continue
-        
         if np.isinf(ibias_max):
-            nf_n_max = 100
+            nf_n_max = 200
         else:
-            nf_n_max = int(round(ibias_max/iref_n))
+            nf_n_max = int(round(ibias_max/n_op_info['ibias']))
             
         nf_n_vec = np.arange(1, nf_n_max, 1)
         for nf_n in nf_n_vec:
             # Number of fingers can only be integer,
             # so increase as necessary until you get
             # sufficiently accurate/precise bias + current match
-            nf_p = int(round(nf_n*pn_ratio))
-            if nf_p <= 0:
-                continue
-            elif nf_p > nf_n_max:
-                break
-
-            ibias_n = iref_n * nf_n
-            ibias_p = iref_p * nf_p
-            ibias_error = (abs(ibias_n)-abs(ibias_p))/min(abs(ibias_n), abs(ibias_p))
-            if ibias_error > error_tol:
-                # ("ibias_error: {}".format(ibias_error))
+            ratio_good, nf_p = verify_ratio(n_op_info['ibias'],
+                                            p_op_info['ibias'],
+                                            nf_n,
+                                            error_tol)
+            if not ratio_good:
                 continue
 
             # Getting small signal parameters to constrain Rf
@@ -341,13 +328,13 @@ def verify_TIA_inverter_SS(
     rdc = num[-1]/den[-1]
    
     if abs(round(rdc)) < round(rdc_min):
-        print("GAIN:\t{0} (FAIL)\n".format(rdc))
+        print("GAIN:\t{0} (FAIL)".format(rdc))
         return False, dict(rdc=rdc,fbw=None, pm=None)
 
     # Check bandwidth
     fbw = get_w_3db(num, den)/(2*np.pi)
     if fbw < fbw_min or np.isnan(fbw):
-        print("BW:\t{0} (FAIL)\n".format(fbw))
+        print("BW:\t{0} (FAIL)".format(fbw))
         return False, dict(rdc=rdc,fbw=fbw, pm=None)
 
     # Check phase margin by constructing an LTICircuit first

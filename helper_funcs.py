@@ -81,6 +81,7 @@ def estimate_vth(db, vdd, vbs, mos_type="nmos"):
     if mos_type == "pmos":
         vgs = -vgs
         vds = -vds
+        vbs = -vbs
     op = db.query(vgs=vgs, vds=vds, vbs=vbs)
     return abs(vgs) - op['vstar']
 
@@ -147,7 +148,7 @@ def calculate_Nsigma(cyield):
         Returns the (float) number of standard deviations to target for 
         reliability when simulating. 
     '''
-    return np.sqrt(2)*special.erfinv(cyield))
+    return np.sqrt(2)*special.erfinv(cyield)
 
 # -------------------------------------------------
 # -------------- Debugging Utilities --------------
